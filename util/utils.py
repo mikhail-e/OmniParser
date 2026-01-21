@@ -20,15 +20,7 @@ from matplotlib import pyplot as plt
 import easyocr
 from paddleocr import PaddleOCR
 reader = easyocr.Reader(['en'])
-paddle_ocr = PaddleOCR(
-    lang='en',  # other lang also available
-    use_angle_cls=False,
-    use_gpu=False,  # using cuda will conflict with pytorch in the same process
-    show_log=False,
-    max_batch_size=1024,
-    use_dilation=True,  # improves accuracy
-    det_db_score_mode='slow',  # improves accuracy
-    rec_batch_num=1024)
+paddle_ocr = PaddleOCR(lang='en')
 import time
 import base64
 
@@ -59,9 +51,10 @@ def get_caption_model_processor(model_name, model_name_or_path="Salesforce/blip2
             model_name_or_path, device_map=None, torch_dtype=torch.float16
         ).to(device)
     elif model_name == "florence2":
-        from transformers import AutoProcessor, AutoModelForCausalLM 
+        from transformers import AutoProcessor, AutoModelForCausalLM
         processor = AutoProcessor.from_pretrained("microsoft/Florence-2-base", trust_remote_code=True)
-        if device == 'cpu':
+        # Use float32 on MPS (Apple Silicon) to avoid type mismatch issues
+        if device == 'cpu' or device == 'mps':
             model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float32, trust_remote_code=True)
         else:
             model = AutoModelForCausalLM.from_pretrained(model_name_or_path, torch_dtype=torch.float16, trust_remote_code=True).to(device)
@@ -514,9 +507,17 @@ def check_ocr_box(image_source: Union[str, Image.Image], display_img = True, out
             text_threshold = 0.5
         else:
             text_threshold = easyocr_args['text_threshold']
-        result = paddle_ocr.ocr(image_np, cls=False)[0]
-        coord = [item[0] for item in result if item[1][1] > text_threshold]
-        text = [item[1][0] for item in result if item[1][1] > text_threshold]
+        ocr_result = paddle_ocr.predict(image_np)[0]
+        # New PaddleOCR API returns OCRResult object with separate lists
+        dt_polys = ocr_result.get('dt_polys', [])
+        rec_texts = ocr_result.get('rec_texts', [])
+        rec_scores = ocr_result.get('rec_scores', [])
+        coord = []
+        text = []
+        for i, score in enumerate(rec_scores):
+            if score > text_threshold:
+                coord.append(dt_polys[i].tolist() if hasattr(dt_polys[i], 'tolist') else dt_polys[i])
+                text.append(rec_texts[i])
     else:  # EasyOCR
         if easyocr_args is None:
             easyocr_args = {}

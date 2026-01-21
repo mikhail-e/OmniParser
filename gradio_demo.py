@@ -1,3 +1,28 @@
+import sys
+import os
+import types
+
+# macOS compatibility patches
+os.environ["FLASH_ATTN_DISABLED"] = "1"
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
+# Create mock flash_attn module to prevent import errors
+flash_attn_mock = types.ModuleType("flash_attn")
+flash_attn_mock.__version__ = "0.0.0"
+flash_attn_mock.__spec__ = types.ModuleType("flash_attn").__spec__
+sys.modules["flash_attn"] = flash_attn_mock
+sys.modules["flash_attn.bert_padding"] = types.ModuleType("flash_attn.bert_padding")
+sys.modules["flash_attn.flash_attn_interface"] = types.ModuleType("flash_attn.flash_attn_interface")
+
+# Patch importlib to report flash_attn as available
+import importlib.util
+_original_find_spec = importlib.util.find_spec
+def _patched_find_spec(name, *args, **kwargs):
+    if name == "flash_attn":
+        return types.SimpleNamespace(origin="/fake/flash_attn", loader=None)
+    return _original_find_spec(name, *args, **kwargs)
+importlib.util.find_spec = _patched_find_spec
+
 from typing import Optional
 
 import gradio as gr
@@ -27,7 +52,7 @@ MARKDOWN = """
 OmniParser is a screen parsing tool to convert general GUI screen to structured elements. 
 """
 
-DEVICE = torch.device('cuda')
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # @spaces.GPU
 # @torch.inference_mode()
